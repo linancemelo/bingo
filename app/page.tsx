@@ -121,7 +121,9 @@ export default function Home() {
       frequency[i] = 0;
     }
 
-    historicalData.slice(0, analysisRange).forEach(draw => {
+    const dataToAnalyze = historicalData.slice(0, analysisRange);
+  
+    dataToAnalyze.forEach(draw => {
       draw.numbers.forEach(num => {
         frequency[num]++;
       });
@@ -235,12 +237,12 @@ export default function Home() {
         />
 
         {/* 2. 成本與中獎分析 */}
-        <CostAnalysis
+        {/* <CostAnalysis
           stars={stars}
           multiple={multiple}
           periods={periods}
           bets={bets}
-        />
+        /> */}
 
         {/* 3. AI 智慧分析 */}
         <AIAnalysis

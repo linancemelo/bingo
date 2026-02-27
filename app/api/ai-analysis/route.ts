@@ -688,18 +688,35 @@ function generatePrompt(strategy: string, historicalData: any[], stars: number, 
         strategyPrompt = `請使用「熱門策略」分析方法。
         
 🎯 純熱門策略重點：
-- 專注於熱門號碼（出現頻率較高的號碼）
-- 不要混搭冷門或連號
-- 從熱門號碼池中選擇最穩定的組合
-- 不同注之間可以有重複號碼，用不同組合增加覆蓋範圍
+- ${stars <= 4 ? '僅從 Top 8 熱門號碼中選擇並排列組合' : '僅從 Top 10 熱門號碼中選擇並排列組合'}
+- 不要混搭冷門或連號，只使用純熱門號碼
+- 每注就是從熱門號碼池中排列組合不同的組合
+- 不同注之間可以有重複號碼，透過不同排列增加覆蓋率
 - 目標：至少命中${Math.max(2, Math.floor(stars * 0.6))}個號碼
+
+🎯 號碼池限制：
+- ${stars <= 4 ? `可選號碼池（僅限這 8 個號碼）: ${hot.slice(0, 8).join(', ')}` : `可選號碼池（僅限這 10 個號碼）: ${hot.slice(0, 10).join(', ')}`}
+- ⚠️ **絕對不可以選擇這個號碼池以外的任何號碼**
+- ⚠️ 只能從上述 ${stars <= 4 ? '8' : '10'} 個熱門號碼中進行排列組合
 
 🎯 排除規則：
 - ⚠️ 必須排除上一期的 20 個中獎號碼：${lastDrawNumbers.join(', ')}
 - ⚠️ 必須排除最冷門的 20 個號碼（含0次號碼）
 - ⚠️ 必須排除頻率最低的兩個區塊號碼
 
-可選熱門號碼參考: ${hot.join(', ')}`;
+範例（${stars}星）：
+${stars === 3 ? `- [${hot.slice(0, 3).join(',')}]
+- [${hot.slice(1, 4).join(',')}]
+- [${hot.slice(2, 5).join(',')}]` : ''}
+${stars === 4 ? `- [${hot.slice(0, 4).join(',')}]
+- [${hot.slice(1, 5).join(',')}]
+- [${hot.slice(2, 6).join(',')}]` : ''}
+${stars === 5 ? `- [${hot.slice(0, 5).join(',')}]
+- [${hot.slice(1, 6).join(',')}]
+- [${hot.slice(2, 7).join(',')}]` : ''}
+${stars === 6 ? `- [${hot.slice(0, 6).join(',')}]
+- [${hot.slice(1, 7).join(',')}]
+- [${hot.slice(2, 8).join(',')}]` : ''}`;
         break;
       case 'consecutive':
         strategyPrompt = `請使用「連號策略」分析方法。
