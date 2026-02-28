@@ -18,7 +18,7 @@ export default function CostAnalysis({ stars, multiple, periods, bets }: CostAna
   const PRIZE_TABLE: { [key: number]: { [key: string]: number } } = {
     1: { '1': 75 },
     2: { '2': 150 },
-    3: { '2': 25, '3': 1000 },
+    3: { '2': 50, '3': 1000 },
     4: { '2': 25, '3': 150, '4': 2000 },
     5: { '3': 50, '4': 600, '5': 10000 },
     6: { '3': 25, '4': 200, '5': 1200, '6': 50000 },

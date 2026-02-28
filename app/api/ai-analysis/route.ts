@@ -28,13 +28,9 @@ export async function POST(request: Request) {
     // 🎯 判斷投注模式：多期一注 vs 一期多注
     const isMultiPeriodSingleBet = periods > 1 && bets === 1;
     
-    // 🎯 判斷策略：連號策略不排除上期號碼
+    // 🎯 判斷策略
     const isConsecutiveStrategy = strategy === 'consecutive';
-    
-    // 獲取上一期號碼用於排除（連號策略除外）
-    const lastDrawNumbers = (historicalData.length > 0 && !isConsecutiveStrategy) 
-      ? historicalData[0].numbers 
-      : [];
+    const isTailStrategy = strategy === 'tail';
     
     // 如果不是多期一注，需要計算排除的號碼
     if (!isMultiPeriodSingleBet) {
@@ -80,7 +76,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const prompt = generatePrompt(strategy, historicalData, stars, periods, bets, coldestNumbers, lowestBlockNumbers, isMultiPeriodSingleBet, isConsecutiveStrategy);
+    const prompt = generatePrompt(strategy, historicalData, stars, periods, bets, coldestNumbers, lowestBlockNumbers, isMultiPeriodSingleBet, isConsecutiveStrategy, isTailStrategy);
     
     const chatCompletion = await groq.chat.completions.create({
       messages: [
@@ -110,7 +106,6 @@ export async function POST(request: Request) {
             ? `你是一個專業的台灣賓果彩券分析師。請根據歷史資料分析並推薦${bets}組號碼（每組${stars}個號碼）。
 
 🎯 連號策略（排除規則）：
-- ❌ 不排除上一期的號碼（連號可能持續出現）
 - ⚠️ 必須排除最冷門的 20 個號碼（含0次號碼）：${coldestNumbers.join(', ')}
 - ⚠️ 必須排除頻率最低的兩個區塊號碼：${lowestBlockNumbers.join(', ')}
 - ⚠️ 每注必須是 ${stars} 個「完全連續」的號碼
@@ -125,10 +120,46 @@ export async function POST(request: Request) {
 - 目標：${stars}個連續號碼中至少命中${Math.max(2, Math.floor(stars * 0.6))}個
 
 返回JSON格式：{"bets": [[第1注號碼], [第2注號碼], ...], "reasoning": "分析理由"}`
+            : isTailStrategy
+            ? `你是一個專業的台灣賓果彩券分析師。請根據歷史資料分析並推薦${bets}組號碼（每組${stars}個號碼）。
+
+🎯 尾號包牌策略（重要：每注必須包含同一個熱門尾號的號碼）：
+- ⚠️ **核心概念**：每一注的所有號碼必須是「同一個尾號」的不同號碼
+- 分析最近 ${periods} 期中出現最頻繁的尾號（個位數 0-9）
+- 找出最熱門的 1-2 個尾號
+- ⚠️ 必須排除最冷門的 20 個號碼（含0次號碼）：${coldestNumbers.join(', ')}
+- ⚠️ 必須排除頻率最低的兩個區塊號碼：${lowestBlockNumbers.join(', ')}
+
+🎯 包牌策略示例：
+**假設熱門尾號是 3**，可選號碼：3,13,23,33,43,53,63,73（排除被禁用的）
+- 如果是 3 星包牌：從這些「尾號都是3」的號碼中選 3 個
+  - 第1注：[23,33,53] ← 都是尾號3
+  - 第2注：[23,33,63] ← 都是尾號3
+  - 第3注：[23,53,63] ← 都是尾號3
+  - 第4注：[33,53,63] ← 都是尾號3
+
+**假設熱門尾號是 7**，可選號碼：7,17,27,37,47,57,67,77（排除被禁用的）
+- 如果是 4 星包牌：從這些「尾號都是7」的號碼中選 4 個
+  - 第1注：[17,27,37,47] ← 都是尾號7
+  - 第2注：[17,27,37,57] ← 都是尾號7
+
+🎯 多尾號策略（如果需要多注）：
+- 第一組注碼：使用最熱門的尾號（例如尾號3）生成若干注
+- 第二組注碼：使用次熱門的尾號（例如尾號7）生成若干注
+- 確保不同注之間有明顯的尾號區分
+
+🎯 分析步驟：
+1. 統計最近 ${periods} 期中每個尾號（0-9）的出現次數
+2. 選出出現頻率最高的 1-2 個尾號
+3. 對於每個熱門尾號，找出所有可用的號碼（1-80中尾號相同且未被排除的）
+4. 從這些號碼中進行排列組合，生成 ${bets} 注
+5. **每一注的所有號碼必須是同一個尾號**
+6. 目標：通過尾號包牌提高命中率
+
+返回JSON格式：{"bets": [[第1注號碼], [第2注號碼], ...], "reasoning": "分析理由，說明選擇了哪個尾號，該尾號出現了多少次，以及為何選擇這些號碼組合"}`
             : `你是一個專業的台灣賓果彩券分析師。請根據歷史資料分析並推薦${bets}組號碼（每組${stars}個號碼）。
 
 🎯 AI 智慧建議策略（混搭策略）：
-- ⚠️ 必須排除上一期的 20 個中獎號碼：${lastDrawNumbers.join(', ')}
 - ⚠️ 必須排除最冷門的 20 個號碼（含0次號碼）：${coldestNumbers.join(', ')}
 - ⚠️ 必須排除頻率最低的兩個區塊號碼：${lowestBlockNumbers.join(', ')}
 - ✅ 可以從剩餘號碼中自由混搭：
@@ -163,21 +194,21 @@ export async function POST(request: Request) {
       if (jsonMatch) {
         parsedResponse = JSON.parse(jsonMatch[0]);
       } else {
-        parsedResponse = {
-          bets: generateFallbackBets(
-            bets, 
-            stars, 
-            isConsecutiveStrategy ? [...coldestNumbers, ...lowestBlockNumbers] : [...lastDrawNumbers, ...coldestNumbers, ...lowestBlockNumbers]
-          ),
-          reasoning: content
-        };
+      parsedResponse = {
+        bets: generateFallbackBets(
+          bets, 
+          stars, 
+          isConsecutiveStrategy ? [...coldestNumbers, ...lowestBlockNumbers] : [...coldestNumbers, ...lowestBlockNumbers]
+        ),
+        reasoning: content
+      };
       }
     } catch (e) {
       parsedResponse = {
         bets: generateFallbackBets(
           bets, 
           stars, 
-          isConsecutiveStrategy ? [...coldestNumbers, ...lowestBlockNumbers] : [...lastDrawNumbers, ...coldestNumbers, ...lowestBlockNumbers]
+          isConsecutiveStrategy ? [...coldestNumbers, ...lowestBlockNumbers] : [...coldestNumbers, ...lowestBlockNumbers]
         ),
         reasoning: content
       };
@@ -192,7 +223,7 @@ export async function POST(request: Request) {
       parsedResponse.bets = generateFallbackBets(
         bets, 
         stars, 
-        isConsecutiveStrategy ? [...coldestNumbers, ...lowestBlockNumbers] : [...lastDrawNumbers, ...coldestNumbers, ...lowestBlockNumbers]
+        [...coldestNumbers, ...lowestBlockNumbers]
       );
     }
 
@@ -203,7 +234,7 @@ export async function POST(request: Request) {
       const additionalBets = generateFallbackBets(
         bets - parsedResponse.bets.length, 
         stars, 
-        isConsecutiveStrategy ? [] : [...lastDrawNumbers, ...coldestNumbers, ...lowestBlockNumbers]
+        [...coldestNumbers, ...lowestBlockNumbers]
       );
       parsedResponse.bets = [...parsedResponse.bets, ...additionalBets];
     } else if (parsedResponse.bets.length > bets) {
@@ -214,6 +245,7 @@ export async function POST(request: Request) {
 
     // 确保每注都有正确数量的号码，从小到大排序
     // 连号策略需要验证是否为完全连续的号码
+    // 尾號策略需要验证是否为同一个尾号
     if (isConsecutiveStrategy) {
       // 连号策略：验证是否为完全连续号码，并且不包含被排除的号码
       const excludedNumbers = [...coldestNumbers, ...lowestBlockNumbers];
@@ -315,9 +347,85 @@ export async function POST(request: Request) {
         
         return sortedBet;
       });
+    } else if (isTailStrategy) {
+      // 尾號策略：验证每注是否为同一个尾号，如果不是则重新生成
+      const excludedNumbers = [...coldestNumbers, ...lowestBlockNumbers];
+      
+      // 计算尾号频率
+      const recentNumbers = historicalData.slice(0, periods).flatMap((d: any) => d.numbers);
+      const frequency: { [key: number]: number } = {};
+      for (let i = 1; i <= 80; i++) {
+        frequency[i] = 0;
+      }
+      recentNumbers.forEach((num: number) => {
+        frequency[num] = (frequency[num] || 0) + 1;
+      });
+      
+      const tailFrequency: { [key: number]: number } = {};
+      for (let i = 0; i <= 9; i++) {
+        tailFrequency[i] = 0;
+      }
+      recentNumbers.forEach(num => {
+        const tail = num % 10;
+        tailFrequency[tail] = (tailFrequency[tail] || 0) + 1;
+      });
+      
+      // 找出最热门的尾号
+      const sortedTails = Object.entries(tailFrequency)
+        .sort(([, a], [, b]) => (b as number) - (a as number))
+        .map(([tail]) => parseInt(tail));
+      
+      const availablePool = Array.from({ length: 80 }, (_, i) => i + 1)
+        .filter(num => !excludedNumbers.includes(num));
+      
+      console.log(`🎯 尾號策略后处理：验证每注是否为同一尾号`);
+      
+      parsedResponse.bets = parsedResponse.bets.map((bet: number[], betIndex: number) => {
+        let sortedBet = bet.slice(0, stars).filter(num => !excludedNumbers.includes(num)).sort((a, b) => a - b);
+        
+        // 检查是否所有号码都是同一个尾号
+        const tails = sortedBet.map(num => num % 10);
+        const uniqueTails = Array.from(new Set(tails));
+        const isSameTail = uniqueTails.length === 1;
+        
+        if (!isSameTail || sortedBet.length < stars) {
+          console.log(`⚠️ 尾號策略：检测到无效号码组合 [${sortedBet.join(',')}]，尾号：[${tails.join(',')}]，重新生成`);
+          
+          // 重新生成：为每个热门尾号构建候选号码池
+          let generated = false;
+          for (const tail of sortedTails) {
+            const tailNumbers: number[] = [];
+            for (let i = tail; i <= 80; i += 10) {
+              if (i > 0 && availablePool.includes(i)) {
+                tailNumbers.push(i);
+              }
+            }
+            
+            // 按频率排序
+            tailNumbers.sort((a, b) => (frequency[b] || 0) - (frequency[a] || 0));
+            
+            if (tailNumbers.length >= stars) {
+              // 从这个尾号的号码中选择前 stars 个
+              sortedBet = tailNumbers.slice(0, stars);
+              console.log(`✅ 使用尾号 ${tail} 重新生成：[${sortedBet.join(',')}]，共 ${tailNumbers.length} 个候选号码`);
+              generated = true;
+              break;
+            }
+          }
+          
+          if (!generated) {
+            console.log(`⚠️ 警告：无法找到足够的同尾号号码，使用热门号码代替`);
+            sortedBet = generateFallbackNumbers(stars, excludedNumbers);
+          }
+        } else {
+          console.log(`✅ 验证通过：[${sortedBet.join(',')}]，都是尾号 ${uniqueTails[0]}`);
+        }
+        
+        return sortedBet;
+      });
     } else {
-      // 其他策略：过滤上期号码、最冷门号码和低频区块号码
-      const excludedNumbers = [...lastDrawNumbers, ...coldestNumbers, ...lowestBlockNumbers];
+      // 其他策略：过滤最冷门号码和低频区块号码
+      const excludedNumbers = [...coldestNumbers, ...lowestBlockNumbers];
       parsedResponse.bets = parsedResponse.bets.map((bet: number[]) => {
         let sortedBet: number[];
         const filteredBet = bet.filter(num => !excludedNumbers.includes(num));
@@ -350,9 +458,7 @@ export async function POST(request: Request) {
     if (uniqueBets.length < bets) {
       console.log(`⚠️ 去重后注数不足：期望${bets}注，实际${uniqueBets.length}注，补充中...`);
       
-      const excludedNumbers = isConsecutiveStrategy 
-        ? [...coldestNumbers, ...lowestBlockNumbers]
-        : [...lastDrawNumbers, ...coldestNumbers, ...lowestBlockNumbers];
+      const excludedNumbers = [...coldestNumbers, ...lowestBlockNumbers];
       
       if (isConsecutiveStrategy) {
         // 连号策略：补充不重复的连续号码组（优先包含热门号）
@@ -433,6 +539,95 @@ export async function POST(request: Request) {
             console.log(`✅ 补充连号注码：[${signature}]，包含 ${item.hotCount} 个热门号`);
           }
         }
+      } else if (isTailStrategy) {
+        // 尾號策略：补充同尾号的注码
+        const availablePool = Array.from({ length: 80 }, (_, i) => i + 1)
+          .filter(num => !excludedNumbers.includes(num));
+        
+        // 计算尾号频率和热门号码
+        const recentNumbers = historicalData.slice(0, periods).flatMap((d: any) => d.numbers);
+        const frequency: { [key: number]: number } = {};
+        for (let i = 1; i <= 80; i++) {
+          frequency[i] = 0;
+        }
+        recentNumbers.forEach((num: number) => {
+          frequency[num] = (frequency[num] || 0) + 1;
+        });
+        
+        const tailFrequency: { [key: number]: number } = {};
+        for (let i = 0; i <= 9; i++) {
+          tailFrequency[i] = 0;
+        }
+        recentNumbers.forEach(num => {
+          const tail = num % 10;
+          tailFrequency[tail] = (tailFrequency[tail] || 0) + 1;
+        });
+        
+        // 找出最热门的尾号
+        const sortedTails = Object.entries(tailFrequency)
+          .sort(([, a], [, b]) => (b as number) - (a as number))
+          .map(([tail]) => parseInt(tail));
+        
+        console.log(`🎯 尾號策略补充：热门尾号排序 ${sortedTails.join(', ')}`);
+        
+        // 为每个尾号构建候选号码池
+        const tailCandidates: { tail: number, numbers: number[] }[] = [];
+        for (const tail of sortedTails) {
+          const numbersWithTail: number[] = [];
+          for (let i = tail; i <= 80; i += 10) {
+            if (i > 0 && availablePool.includes(i)) {
+              numbersWithTail.push(i);
+            }
+          }
+          // 按频率排序
+          numbersWithTail.sort((a, b) => (frequency[b] || 0) - (frequency[a] || 0));
+          
+          if (numbersWithTail.length >= stars) {
+            tailCandidates.push({ tail, numbers: numbersWithTail });
+          }
+        }
+        
+        console.log(`🎯 可用于包牌的尾号数量: ${tailCandidates.length}`);
+        tailCandidates.forEach(({ tail, numbers }) => {
+          console.log(`   尾号 ${tail}: ${numbers.join(', ')} (${numbers.length}个)`);
+        });
+        
+        // 为每个可用的尾号生成所有可能的组合
+        const allPossibleCombinations: { tail: number, combo: number[] }[] = [];
+        
+        for (const { tail, numbers } of tailCandidates) {
+          // 生成该尾号的所有 stars 个号码的组合
+          const combinations = generateCombinations(numbers, stars);
+          combinations.forEach(combo => {
+            allPossibleCombinations.push({ tail, combo });
+          });
+        }
+        
+        console.log(`🎯 总共生成 ${allPossibleCombinations.length} 个候选组合`);
+        
+        // 从组合中选择，直到达到需要的注数
+        for (const { tail, combo } of allPossibleCombinations) {
+          if (uniqueBets.length >= bets) break;
+          
+          const signature = combo.sort((a, b) => a - b).join(',');
+          if (!betSignatures.has(signature)) {
+            uniqueBets.push([...combo].sort((a, b) => a - b));
+            betSignatures.add(signature);
+            console.log(`✅ 补充尾號注码：[${signature}]，尾号：${tail}`);
+          }
+        }
+        
+        // 如果还不够，使用随机方式补充
+        while (uniqueBets.length < bets) {
+          const newBet = generateFallbackNumbers(stars, excludedNumbers);
+          const signature = newBet.sort((a, b) => a - b).join(',');
+          
+          if (!betSignatures.has(signature)) {
+            uniqueBets.push(newBet);
+            betSignatures.add(signature);
+            console.log(`✅ 补充随机注码：[${signature}]`);
+          }
+        }
       } else {
         // 其他策略：补充不重复的随机注码
         while (uniqueBets.length < bets) {
@@ -459,9 +654,6 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error('AI Analysis error:', error);
     const fallbackBets = 1;
-    
-    // 計算排除的號碼（上期 + 最冷門10個）
-    const lastDrawNumbers = historicalData.length > 0 ? historicalData[0].numbers : [];
     
     // 如果没有coldestNumbers，在error handler中计算
     let coldest20 = coldestNumbers.length > 0 ? coldestNumbers : [];
@@ -501,14 +693,14 @@ export async function POST(request: Request) {
       lowestBlocks = calculateLowestBlockNumbers(historicalData, periods);
     }
     
-    const excludedNumbers = [...lastDrawNumbers, ...coldest20, ...lowestBlocks];
+    const excludedNumbers = [...coldest20, ...lowestBlocks];
     
     return NextResponse.json(
       { 
         error: error.message || '分析失敗',
         fallback: {
           bets: generateFallbackBets(fallbackBets, 5, excludedNumbers),
-          reasoning: '由於 API 錯誤，這是基於隨機演算法生成的推薦號碼（已排除上期號碼、最冷門20個號碼和最低頻區塊號碼）'
+          reasoning: '由於 API 錯誤，這是基於隨機演算法生成的推薦號碼（已排除最冷門20個號碼和最低頻區塊號碼）'
         }
       },
       { status: 500 }
@@ -516,8 +708,7 @@ export async function POST(request: Request) {
   }
 }
 
-function generatePrompt(strategy: string, historicalData: any[], stars: number, periods: number, bets: number, coldestNumbers: number[], lowestBlockNumbers: number[], isMultiPeriodSingleBet: boolean, isConsecutiveStrategy: boolean): string {
-  const lastDrawNumbers = historicalData.length > 0 ? historicalData[0].numbers : [];
+function generatePrompt(strategy: string, historicalData: any[], stars: number, periods: number, bets: number, coldestNumbers: number[], lowestBlockNumbers: number[], isMultiPeriodSingleBet: boolean, isConsecutiveStrategy: boolean, isTailStrategy: boolean): string {
   
   // 計算頻率
   const recentNumbers = historicalData.slice(0, periods).flatMap(d => d.numbers);
@@ -625,7 +816,6 @@ function generatePrompt(strategy: string, historicalData: any[], stars: number, 
   ${stars >= 6 ? stars + '星 → 包含熱門號的' + stars + '個連續號碼' : ''}
 
 🎯 排除規則：
-- ❌ 不排除上一期的號碼（連號可能持續出現）
 - ⚠️ 必須排除最冷門的 20 個號碼（含0次號碼）：${coldestNumbers.join(', ')}
 - ⚠️ 必須排除頻率最低的兩個區塊號碼：${lowestBlockNumbers.join(', ')}
 - ✅ 可選號碼池（${availablePool.length}個）：${availablePool.join(', ')}
@@ -670,11 +860,10 @@ function generatePrompt(strategy: string, historicalData: any[], stars: number, 
   } else {
     // 一期多注：使用動態排除策略
     const availablePool = Array.from({ length: 80 }, (_, i) => i + 1)
-      .filter(num => !lastDrawNumbers.includes(num) && !coldestNumbers.includes(num) && !lowestBlockNumbers.includes(num));
+      .filter(num => !coldestNumbers.includes(num) && !lowestBlockNumbers.includes(num));
 
-    console.log(`🎯 一期多注策略：排除上期、冷門、低頻區塊`);
-    console.log(`🎯 排除上期號碼 (20個): ${lastDrawNumbers.join(', ')}`);
-    console.log(`🎯 排除最冷門號碼 (10個): ${coldestNumbers.join(', ')}`);
+    console.log(`🎯 一期多注策略：排除冷門、低頻區塊`);
+    console.log(`🎯 排除最冷門號碼 (20個): ${coldestNumbers.join(', ')}`);
     console.log(`🎯 排除低頻區塊號碼 (${lowestBlockNumbers.length}個): ${lowestBlockNumbers.join(', ')}`);
     console.log(`🎯 可選號碼池 (${availablePool.length}個): ${availablePool.join(', ')}`);
 
@@ -700,7 +889,6 @@ function generatePrompt(strategy: string, historicalData: any[], stars: number, 
 - ⚠️ 只能從上述 ${stars <= 4 ? '8' : '10'} 個熱門號碼中進行排列組合
 
 🎯 排除規則：
-- ⚠️ 必須排除上一期的 20 個中獎號碼：${lastDrawNumbers.join(', ')}
 - ⚠️ 必須排除最冷門的 20 個號碼（含0次號碼）
 - ⚠️ 必須排除頻率最低的兩個區塊號碼
 
@@ -729,9 +917,104 @@ ${stars === 6 ? `- [${hot.slice(0, 6).join(',')}]
 - 目標：至少命中${Math.max(2, Math.floor(stars * 0.6))}個號碼
 
 🎯 排除規則：
-- ❌ 不排除上一期的號碼（連號可能持續出現）
 - ⚠️ 必須排除最冷門的 20 個號碼（含0次號碼）
 - ⚠️ 必須排除頻率最低的兩個區塊號碼`;
+        break;
+      case 'tail':
+        // 計算尾號頻率
+        const tailFrequency: { [key: number]: number } = {};
+        for (let i = 0; i <= 9; i++) {
+          tailFrequency[i] = 0;
+        }
+        recentNumbers.forEach(num => {
+          const tail = num % 10;
+          tailFrequency[tail] = (tailFrequency[tail] || 0) + 1;
+        });
+        
+        // 找出最熱門的尾號（前3個）
+        const sortedTails = Object.entries(tailFrequency)
+          .sort(([, a], [, b]) => (b as number) - (a as number))
+          .slice(0, 3)
+          .map(([tail, count]) => ({ tail: parseInt(tail), count: count as number }));
+        
+        console.log(`🎯 尾號包牌策略：分析熱門尾號`);
+        sortedTails.forEach(({ tail, count }) => {
+          console.log(`   尾號 ${tail}: 出現 ${count} 次`);
+        });
+        
+        // 為每個熱門尾號找出所有可用的號碼（1-80中尾號相同且未被排除的）
+        const tailNumbersMap: { [key: number]: number[] } = {};
+        sortedTails.forEach(({ tail }) => {
+          const numbersWithTail: number[] = [];
+          for (let i = tail; i <= 80; i += 10) {
+            if (i > 0 && availablePool.includes(i)) {
+              numbersWithTail.push(i);
+            }
+          }
+          // 按照频率排序这些号码
+          numbersWithTail.sort((a, b) => (frequency[b] || 0) - (frequency[a] || 0));
+          tailNumbersMap[tail] = numbersWithTail;
+        });
+        
+        console.log(`🎯 每個尾號的可用號碼：`);
+        Object.entries(tailNumbersMap).forEach(([tail, nums]) => {
+          console.log(`   尾號 ${tail}: ${nums.join(', ')} (共${nums.length}個)`);
+        });
+        
+        // 找出可以进行包牌的尾号（至少要有 stars 个号码）
+        const validTails = sortedTails.filter(({ tail }) => 
+          tailNumbersMap[tail].length >= stars
+        );
+        
+        if (validTails.length === 0) {
+          console.log(`⚠️ 警告：没有足够的尾号可以进行包牌`);
+        }
+        
+        // 构建详细的策略提示
+        const tailExamples = validTails.slice(0, 2).map(({ tail }) => {
+          const nums = tailNumbersMap[tail];
+          return `**尾號 ${tail}**（共 ${nums.length} 個號碼）：${nums.join(', ')}`;
+        }).join('\n');
+        
+        strategyPrompt = `請使用「尾號包牌策略」分析方法。
+        
+🎯 尾號包牌核心規則（非常重要）：
+- ⚠️ **每一注的所有號碼必須是「同一個尾號」**
+- ⚠️ 不能混合不同尾號！例如：[23,33,43] ✓正確（都是尾號3），[23,34,45] ✗錯誤（混合了3,4,5）
+- 從最熱門的尾號中選擇，進行排列組合
+
+🎯 可用的熱門尾號及其號碼：
+${tailExamples}
+
+🎯 包牌示例（${stars}星）：
+${validTails.length > 0 ? (() => {
+  const exampleTail = validTails[0].tail;
+  const exampleNums = tailNumbersMap[exampleTail];
+  if (exampleNums.length >= stars) {
+    const combo1 = exampleNums.slice(0, stars).join(',');
+    const combo2 = exampleNums.length > stars ? 
+      [...exampleNums.slice(0, stars-1), exampleNums[stars]].sort((a,b)=>a-b).join(',') : '';
+    return `- 使用尾號 ${exampleTail}：\n  第1注：[${combo1}] ← 都是尾號${exampleTail}\n${combo2 ? `  第2注：[${combo2}] ← 都是尾號${exampleTail}` : ''}`;
+  }
+  return '';
+})() : ''}
+
+🎯 策略要點：
+1. **選擇1個最熱門的尾號**（該尾號至少要有 ${stars} 個可用號碼）
+2. 從這個尾號的所有號碼中，進行 ${stars} 個號碼的排列組合
+3. 生成 ${bets} 組不同的組合
+4. 如果需要多注且第一個尾號組合不夠，可以使用第二熱門的尾號
+5. **絕對不能在同一注中混合不同尾號的號碼**
+6. 優先選擇該尾號中頻率較高的號碼
+
+🎯 排除規則：
+- ⚠️ 必須排除最冷門的 20 個號碼（含0次號碼）：${coldestNumbers.join(', ')}
+- ⚠️ 必須排除頻率最低的兩個區塊號碼：${lowestBlockNumbers.join(', ')}
+- ✅ 只能從可用號碼池中選擇
+
+🎯 目標：
+- 通過「同尾號包牌」提高命中率
+- 目標：至少命中${Math.max(2, Math.floor(stars * 0.6))}個號碼`;
         break;
       default:
         strategyPrompt = `請根據最近${periods}期的開獎資料，使用你的AI智慧分析。
@@ -747,21 +1030,18 @@ ${stars === 6 ? `- [${hot.slice(0, 6).join(',')}]
 - 不同注之間可以有重複號碼
 
 🎯 排除規則：
-- ⚠️ 必須排除上一期的 20 個中獎號碼：${lastDrawNumbers.join(', ')}
-- ⚠️ 必須排除最冷門的 15 個號碼（含0次號碼）
+- ⚠️ 必須排除最冷門的 20 個號碼（含0次號碼）
 - ⚠️ 必須排除頻率最低的兩個區塊號碼`;
   }
 
     return `${strategyPrompt}
 
 🚫 核心約束條件：
-- 上一期中獎號碼（${strategy === 'consecutive' ? '不需排除' : '必須排除'}，共20個）：${lastDrawNumbers.join(', ')}
 - 最冷門號碼（必須排除，共20個，含0次號碼）：${coldestNumbers.join(', ')}
 - 最低頻區塊號碼（必須排除）：${lowestBlockNumbers.join(', ')}
 - 可選號碼池（僅限從這些號碼中選擇）：${availablePool.join(', ')}
 
 📊 統計理由：
-- 連續兩期重複號碼平均約 5 個
 - 最冷門號碼（含0次）出現機率極低
 - 從優質號碼池中選擇可大幅提高命中率
 
@@ -769,11 +1049,11 @@ ${stars === 6 ? `- [${hot.slice(0, 6).join(',')}]
 - 分析期數：最近 ${periods} 期
 - 需要推薦：${bets} 組號碼
 - 每組號碼數：${stars} 個
-- 號碼範圍：可選號碼池的號碼（已排除${strategy === 'consecutive' ? '最冷門20個+最低頻區塊' : '上期20個+最冷門20個+最低頻區塊'}）
+- 號碼範圍：可選號碼池的號碼（已排除最冷門20個+最低頻區塊）
 - 實戰目標：每組至少命中 ${Math.max(2, Math.floor(stars * 0.6))} 個號碼
 
 重要原則：
-1. ⚠️ ${strategy === 'consecutive' ? '絕對不可選擇最冷門20個號碼和最低頻區塊號碼' : '絕對不可選擇上期中獎號碼、最冷門20個號碼和最低頻區塊號碼'}，必須只從可選號碼池中選擇
+1. ⚠️ 絕對不可選擇最冷門20個號碼和最低頻區塊號碼，必須只從可選號碼池中選擇
 2. 💡 不同注之間可以有重複號碼（這樣可以增加覆蓋範圍）
 3. 每組號碼請按從小到大排序
 ${strategy === 'hot' 
@@ -896,4 +1176,29 @@ function calculateLowestBlockNumbers(historicalData: any[], periods: number): nu
   });
   
   return excludedNumbers;
+}
+
+// 生成组合的辅助函数（从 n 个元素中选择 k 个）
+function generateCombinations(arr: number[], k: number): number[][] {
+  if (k === 0) return [[]];
+  if (arr.length === 0) return [];
+  if (k > arr.length) return [];
+  
+  const result: number[][] = [];
+  
+  function combine(start: number, current: number[]) {
+    if (current.length === k) {
+      result.push([...current]);
+      return;
+    }
+    
+    for (let i = start; i < arr.length; i++) {
+      current.push(arr[i]);
+      combine(i + 1, current);
+      current.pop();
+    }
+  }
+  
+  combine(0, []);
+  return result;
 }

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { TrendingUp, Zap, Brain, Play, Copy, Check } from 'lucide-react';
+import { TrendingUp, Zap, Brain, Play, Copy, Check, Hash } from 'lucide-react';
 
 interface AIRecommendation {
   bets: number[][];  // 多注号码
@@ -36,6 +36,7 @@ export default function AIAnalysis({
   const strategies = [
     { id: 'hot', name: '熱門策略', icon: TrendingUp, color: 'bg-red-600/80 hover:bg-red-700 border-red-500' },
     { id: 'consecutive', name: '連號策略', icon: Zap, color: 'bg-yellow-600/80 hover:bg-yellow-700 border-yellow-500' },
+    { id: 'tail', name: '尾號包牌', icon: Hash, color: 'bg-blue-600/80 hover:bg-blue-700 border-blue-500' },
     { id: 'ai', name: 'AI 建議', icon: Brain, color: 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 border-purple-500' },
   ];
 
@@ -97,7 +98,7 @@ export default function AIAnalysis({
           <label className="block text-xs sm:text-sm font-medium mb-3 text-gray-300 pl-1">
             選擇分析策略
           </label>
-          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
             {strategies.map((strategy) => {
               const Icon = strategy.icon;
               const isSelected = selectedStrategy === strategy.id;

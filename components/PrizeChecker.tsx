@@ -13,7 +13,7 @@ const BINGO_PRIZE_TABLE = [
   // 2星
   { stars: 2, hits: 2, prize: 150 },
   // 3星
-  { stars: 3, hits: 2, prize: 25 },
+  { stars: 3, hits: 2, prize: 50 },
   { stars: 3, hits: 3, prize: 1000 },
   // 4星
   { stars: 4, hits: 2, prize: 25 },
